@@ -16,6 +16,7 @@ import AdminView from './components/AdminView';
 // Firebase Imports
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import { getDatabase, ref, onValue, set, remove } from 'firebase/database';
+import { getAnalytics } from "firebase/analytics";
 import { Database } from 'lucide-react';
 
 // --- Local Storage Keys ---
@@ -41,6 +42,7 @@ const setStorage = (key: string, val: any) => {
 
 // --- Firebase Helper ---
 let db: any = null;
+let analytics: any = null;
 
 const initFirebase = (config: any) => {
   try {
@@ -52,6 +54,14 @@ const initFirebase = (config: any) => {
       app = getApp();
     }
     db = getDatabase(app);
+    // Initialize Analytics if supported
+    if (typeof window !== 'undefined') {
+       try {
+         analytics = getAnalytics(app);
+       } catch (e) {
+         console.warn("Analytics failed to load:", e);
+       }
+    }
     return true;
   } catch (e) {
     console.error("Firebase init error:", e);

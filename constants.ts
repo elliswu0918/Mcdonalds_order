@@ -10,7 +10,7 @@ export const FIREBASE_CONFIG = {
   messagingSenderId: "942813975442",
   appId: "1:942813975442:web:05fa796674e6fbaddc274b",
   measurementId: "G-9QRGSH0VRP",
-  // 根據您的 Project ID 推斷的資料庫網址 (預設為 US-Central1)
+  // Realtime Database 必須包含此 URL 才能運作
   databaseURL: "https://realtime-database-be877-default-rtdb.firebaseio.com"
 };
 
