@@ -18,7 +18,7 @@
         }
       }
     </script>
-<script type="importmap">
+  <script type="importmap">
 {
   "imports": {
     "react": "https://aistudiocdn.com/react@^19.2.1",
@@ -35,7 +35,10 @@
 </head>
   <body>
     <div id="root" class="min-h-screen flex items-center justify-center text-gray-500">
-      載入中... (若停留太久請重新整理)
+      <div class="text-center">
+        <p class="text-xl font-bold mb-2">系統載入中...</p>
+        <p class="text-sm text-gray-400">若長時間無反應，請嘗試重新整理</p>
+      </div>
     </div>
     <script type="module" src="/index.tsx"></script>
   </body>
