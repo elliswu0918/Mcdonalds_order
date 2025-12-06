@@ -1,0 +1,5 @@
+{
+  "name": "Copy of McClassOrder",
+  "description": "A class-wide McDonald's ordering system with budget limits, admin controls, and real-time statistics.",
+  "requestFramePermissions": []
+}
