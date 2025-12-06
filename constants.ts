@@ -1,5 +1,19 @@
 import { MenuItem, SystemSettings } from './types';
 
+// --- Firebase Configuration ---
+// 這裡填入您的 Firebase 設定，讓全班都能自動連線
+export const FIREBASE_CONFIG = {
+  apiKey: "AIzaSyBJ9SenGu3oQfeOSZDoKIrUw1gfSrCKHmI",
+  authDomain: "realtime-database-be877.firebaseapp.com",
+  projectId: "realtime-database-be877",
+  storageBucket: "realtime-database-be877.firebasestorage.app",
+  messagingSenderId: "942813975442",
+  appId: "1:942813975442:web:05fa796674e6fbaddc274b",
+  measurementId: "G-9QRGSH0VRP",
+  // 根據您的 Project ID 推斷的資料庫網址 (預設為 US-Central1)
+  databaseURL: "https://realtime-database-be877-default-rtdb.firebaseio.com"
+};
+
 export const MENU_ITEMS: MenuItem[] = [
   // --- 超值全餐 (Value Meals) ---
   { id: 'm1', name: '大麥克', price: 78, category: 'MAIN' },

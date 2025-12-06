@@ -8,16 +8,22 @@ import {
   MenuItem, 
   SystemSettings 
 } from './types';
-import { MENU_ITEMS, DEFAULT_SETTINGS } from './constants';
+import { MENU_ITEMS, DEFAULT_SETTINGS, FIREBASE_CONFIG } from './constants';
 import Login from './components/Login';
 import StudentView from './components/StudentView';
 import AdminView from './components/AdminView';
 
-// --- Local Storage Helpers ---
+// Firebase Imports
+import { initializeApp, getApps, getApp } from 'firebase/app';
+import { getDatabase, ref, onValue, set, remove } from 'firebase/database';
+import { Database } from 'lucide-react';
+
+// --- Local Storage Keys ---
 const STORAGE_KEYS = {
   ORDERS: 'mc_orders_v1',
   SETTINGS: 'mc_settings_v1',
-  CURRENT_USER: 'mc_user_v1', // Simple session persistence
+  CURRENT_USER: 'mc_user_v1',
+  FIREBASE_CONFIG: 'mc_firebase_config',
 };
 
 const getStorage = <T,>(key: string, defaultVal: T): T => {
@@ -33,6 +39,26 @@ const setStorage = (key: string, val: any) => {
   localStorage.setItem(key, JSON.stringify(val));
 };
 
+// --- Firebase Helper ---
+let db: any = null;
+
+const initFirebase = (config: any) => {
+  try {
+    let app;
+    // Check if Firebase is already initialized to avoid duplicate errors
+    if (getApps().length === 0) {
+      app = initializeApp(config);
+    } else {
+      app = getApp();
+    }
+    db = getDatabase(app);
+    return true;
+  } catch (e) {
+    console.error("Firebase init error:", e);
+    return false;
+  }
+};
+
 // --- Context Setup ---
 const AppContext = createContext<AppContextType | null>(null);
 
@@ -40,48 +66,133 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
   const [orders, setOrders] = useState<Order[]>([]);
   const [settings, setSettings] = useState<SystemSettings>(DEFAULT_SETTINGS);
+  
+  // Cloud Mode State
+  const [firebaseConfig, setFirebaseConfig] = useState<any>(null);
+  const [isCloudMode, setIsCloudMode] = useState(false);
+  const [showConfigModal, setShowConfigModal] = useState(false);
 
-  // Load initial data
+  // 1. Initial Load
   useEffect(() => {
-    const savedOrders = getStorage<Order[]>(STORAGE_KEYS.ORDERS, []);
-    const savedSettings = getStorage<SystemSettings>(STORAGE_KEYS.SETTINGS, DEFAULT_SETTINGS);
     const savedUser = getStorage<User | null>(STORAGE_KEYS.CURRENT_USER, null);
-    
-    setOrders(savedOrders);
-    setSettings(savedSettings);
     if (savedUser) setUser(savedUser);
+
+    // PRIORITY 1: Try Hardcoded Config
+    let initialized = false;
+    if (FIREBASE_CONFIG && FIREBASE_CONFIG.apiKey) {
+      if (initFirebase(FIREBASE_CONFIG)) {
+        setIsCloudMode(true);
+        setFirebaseConfig(FIREBASE_CONFIG);
+        initialized = true;
+      }
+    }
+
+    // PRIORITY 2: Try Local Storage Config (Fallback)
+    if (!initialized) {
+      const savedConfig = getStorage<any>(STORAGE_KEYS.FIREBASE_CONFIG, null);
+      if (savedConfig) {
+        setFirebaseConfig(savedConfig);
+        if (initFirebase(savedConfig)) {
+          setIsCloudMode(true);
+        }
+      } else {
+        // Only load local data if NOT in cloud mode
+        const savedOrders = getStorage<Order[]>(STORAGE_KEYS.ORDERS, []);
+        const savedSettings = getStorage<SystemSettings>(STORAGE_KEYS.SETTINGS, DEFAULT_SETTINGS);
+        setOrders(savedOrders);
+        setSettings(savedSettings);
+      }
+    }
   }, []);
 
-  // Persist Data on Change
+  // 2. Firebase Listeners (If Cloud Mode)
   useEffect(() => {
-    setStorage(STORAGE_KEYS.ORDERS, orders);
-  }, [orders]);
+    if (!isCloudMode || !db) return;
+
+    // Listen to Orders
+    const ordersRef = ref(db, 'orders');
+    const unsubOrders = onValue(ordersRef, (snapshot) => {
+      const data = snapshot.val();
+      if (data) {
+        const orderList = Object.values(data) as Order[];
+        setOrders(orderList);
+      } else {
+        setOrders([]);
+      }
+    });
+
+    // Listen to Settings
+    const settingsRef = ref(db, 'settings');
+    const unsubSettings = onValue(settingsRef, (snapshot) => {
+      const data = snapshot.val();
+      if (data) {
+        setSettings(data);
+      }
+    });
+
+    return () => {
+      unsubOrders();
+      unsubSettings();
+    };
+  }, [isCloudMode]);
+
+  // 3. Persist Data (Local Mode fallback)
+  useEffect(() => {
+    if (!isCloudMode) {
+      setStorage(STORAGE_KEYS.ORDERS, orders);
+    }
+  }, [orders, isCloudMode]);
 
   useEffect(() => {
-    setStorage(STORAGE_KEYS.SETTINGS, settings);
-  }, [settings]);
+    if (!isCloudMode) {
+      setStorage(STORAGE_KEYS.SETTINGS, settings);
+    }
+  }, [settings, isCloudMode]);
 
   useEffect(() => {
     setStorage(STORAGE_KEYS.CURRENT_USER, user);
   }, [user]);
 
-  // Actions
+  // --- Actions ---
+
+  const saveFirebaseConfig = (configStr: string) => {
+    try {
+      const cleaned = configStr.replace(/const firebaseConfig = /, '').replace(/;/g, '');
+      // eslint-disable-next-line
+      const config = new Function(`return ${cleaned}`)();
+      
+      setStorage(STORAGE_KEYS.FIREBASE_CONFIG, config);
+      setFirebaseConfig(config);
+      if (initFirebase(config)) {
+        setIsCloudMode(true);
+        setShowConfigModal(false);
+        alert("成功連線至雲端資料庫！");
+      }
+    } catch (e) {
+      alert("設定格式錯誤，請確保複製完整的 firebaseConfig 物件");
+    }
+  };
+
   const login = (name: string, seatNumber: string, isAdmin: boolean) => {
     const newUser: User = {
-      id: isAdmin ? 'admin' : seatNumber, // Use seat number as ID for students for simplicity
+      id: isAdmin ? 'admin' : seatNumber,
       name,
       seatNumber,
       role: isAdmin ? UserRole.ADMIN : UserRole.STUDENT
     };
     setUser(newUser);
 
-    // If student, ensure an order object exists
+    // Only prompt admin if we failed to connect to cloud automatically
+    if (isAdmin && !isCloudMode) {
+      setShowConfigModal(true);
+    }
+
     if (!isAdmin) {
       setOrders(prev => {
         const existing = prev.find(o => o.userId === newUser.id);
         if (existing) return prev;
         return [...prev, {
-          id: `ord_${Date.now()}`,
+          id: `ord_${newUser.id}`,
           userId: newUser.id,
           userName: newUser.name,
           seatNumber: newUser.seatNumber,
@@ -104,16 +215,22 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     return orders.find(o => o.userId === user.id) || null;
   };
 
+  const saveOrder = (order: Order) => {
+    if (isCloudMode && db) {
+      set(ref(db, 'orders/' + order.userId), order);
+    } else {
+      setOrders(prev => prev.map(o => o.userId === order.userId ? order : o));
+    }
+  };
+
   const updateOrderItems = (items: any[]) => {
     if (!user) return;
+    const current = getCurrentOrder();
+    if (!current) return;
+
     const totalPrice = items.reduce((sum, i) => sum + i.menuItem.price * i.quantity, 0);
-    
-    setOrders(prev => prev.map(o => {
-      if (o.userId === user.id) {
-        return { ...o, items, totalPrice, timestamp: Date.now() };
-      }
-      return o;
-    }));
+    const updatedOrder = { ...current, items, totalPrice, timestamp: Date.now() };
+    saveOrder(updatedOrder);
   };
 
   const addToCart = (item: MenuItem) => {
@@ -154,48 +271,63 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   };
 
   const submitOrder = () => {
-    if (!user) return;
-    setOrders(prev => prev.map(o => {
-      if (o.userId === user.id) {
-        return { ...o, status: OrderStatus.SUBMITTED };
-      }
-      return o;
-    }));
+    const current = getCurrentOrder();
+    if (!current) return;
+    const updated = { ...current, status: OrderStatus.SUBMITTED };
+    saveOrder(updated);
   };
 
   const cancelOrder = () => {
-    if (!user) return;
-    setOrders(prev => prev.map(o => {
-      if (o.userId === user.id) {
-        return { ...o, status: OrderStatus.DRAFT };
-      }
-      return o;
-    }));
+    const current = getCurrentOrder();
+    if (!current) return;
+    const updated = { ...current, status: OrderStatus.DRAFT };
+    saveOrder(updated);
   }
 
-  // Admin Actions
   const adminToggleSystem = (isOpen: boolean) => {
-    setSettings(prev => ({ ...prev, isOpen }));
+    const newSettings = { ...settings, isOpen };
+    if (isCloudMode && db) {
+      set(ref(db, 'settings'), newSettings);
+    } else {
+      setSettings(newSettings);
+    }
   };
 
   const adminSetDeadline = (timestamp: number | null) => {
-    setSettings(prev => ({ ...prev, deadline: timestamp }));
+    const newSettings = { ...settings, deadline: timestamp };
+    if (isCloudMode && db) {
+      set(ref(db, 'settings'), newSettings);
+    } else {
+      setSettings(newSettings);
+    }
   };
 
   const adminResetOrder = (orderId: string) => {
-    setOrders(prev => prev.map(o => {
-      if (o.id === orderId) {
-        return { ...o, items: [], totalPrice: 0, status: OrderStatus.DRAFT };
-      }
-      return o;
-    }));
+    const target = orders.find(o => o.id === orderId);
+    if (!target) return;
+    
+    const resetOrder = { ...target, items: [], totalPrice: 0, status: OrderStatus.DRAFT };
+    
+    if (isCloudMode && db) {
+      set(ref(db, 'orders/' + target.userId), resetOrder);
+    } else {
+      setOrders(prev => prev.map(o => o.id === orderId ? resetOrder : o));
+    }
   };
 
   const adminResetAll = () => {
-    setOrders([]);
+    if (isCloudMode && db) {
+      remove(ref(db, 'orders'));
+    } else {
+      setOrders([]);
+    }
   };
 
-  const contextValue: AppContextType = {
+  const contextValue: AppContextType & { 
+    isCloudMode: boolean; 
+    setShowConfigModal: (v: boolean) => void; 
+    saveFirebaseConfig: (v: string) => void 
+  } = {
     user,
     login,
     logout,
@@ -211,22 +343,61 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     adminToggleSystem,
     adminSetDeadline,
     adminResetOrder,
-    adminResetAll
+    adminResetAll,
+    isCloudMode,
+    setShowConfigModal,
+    saveFirebaseConfig
   };
 
-  return <AppContext.Provider value={contextValue}>{children}</AppContext.Provider>;
+  return (
+    <AppContext.Provider value={contextValue}>
+      {children}
+      {showConfigModal && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white p-6 rounded-lg shadow-xl max-w-lg w-full">
+            <h2 className="text-xl font-bold mb-4 flex items-center gap-2">
+              <Database className="text-mcRed" /> 設定雲端資料庫
+            </h2>
+            <p className="text-sm text-gray-600 mb-4">
+              連線失敗。請確認 constants.ts 中的設定是否正確，或在此手動輸入。
+            </p>
+            <textarea 
+              className="w-full h-40 border p-2 rounded text-xs font-mono bg-gray-50 mb-4"
+              placeholder={`{
+  apiKey: "...",
+  databaseURL: "...",
+  ...
+}`}
+              id="firebase-config-input"
+            ></textarea>
+            <div className="flex justify-end gap-2">
+              <button 
+                onClick={() => setShowConfigModal(false)}
+                className="px-4 py-2 text-gray-500 hover:bg-gray-100 rounded"
+              >
+                稍後設定
+              </button>
+              <button 
+                onClick={() => {
+                  const val = (document.getElementById('firebase-config-input') as HTMLTextAreaElement).value;
+                  saveFirebaseConfig(val);
+                }}
+                className="px-4 py-2 bg-mcRed text-white rounded hover:bg-red-700"
+              >
+                儲存並連線
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </AppContext.Provider>
+  );
 };
 
-// --- Main App Component ---
 const Main: React.FC = () => {
-  const ctx = useContext(AppContext);
-  
+  const ctx = useContext(AppContext) as any;
   if (!ctx) return <div>Loading...</div>;
-
-  if (!ctx.user) {
-    return <Login onLogin={ctx.login} />;
-  }
-
+  if (!ctx.user) return <Login onLogin={ctx.login} />;
   return ctx.user.role === UserRole.ADMIN 
     ? <AdminView ctx={ctx} /> 
     : <StudentView ctx={ctx} />;
