@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { AppContextType, OrderStatus } from '../types';
+import { AppContextType, OrderStatus, Order } from '../types';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
 import { Download, RefreshCcw, Lock, Unlock, Trash, Search, LogOut } from 'lucide-react';
 
@@ -10,6 +10,18 @@ interface AdminViewProps {
 const AdminView: React.FC<AdminViewProps> = ({ ctx }) => {
   const [activeTab, setActiveTab] = useState<'ORDERS' | 'STATS'>('STATS');
   const [searchTerm, setSearchTerm] = useState('');
+
+  // Helper: Sort orders by seat number (numeric aware)
+  const getSortedOrders = (orders: Order[]) => {
+    return [...orders].sort((a, b) => {
+      const numA = parseInt(a.seatNumber);
+      const numB = parseInt(b.seatNumber);
+      if (!isNaN(numA) && !isNaN(numB)) {
+        return numA - numB;
+      }
+      return a.seatNumber.localeCompare(b.seatNumber);
+    });
+  };
 
   // Stats Calculation
   const stats = React.useMemo(() => {
@@ -36,7 +48,7 @@ const AdminView: React.FC<AdminViewProps> = ({ ctx }) => {
 
   const handleExportCSV = () => {
     // 1. Summary
-    let csvContent = "data:text/csv;charset=utf-8,\uFEFF"; // Add BOM for Excel
+    let csvContent = "\uFEFF"; // BOM for Excel
     csvContent += "=== 彙總統計 ===\n";
     csvContent += "品項,數量,金額\n";
     stats.forEach(row => {
@@ -48,28 +60,39 @@ const AdminView: React.FC<AdminViewProps> = ({ ctx }) => {
     csvContent += "=== 個人明細 ===\n";
     csvContent += "座號,姓名,餐點內容,總金額\n";
     
-    // Sort orders by seat number if possible (naive string sort)
-    const sortedOrders = [...ctx.orders]
-      .filter(o => o.status === OrderStatus.SUBMITTED)
-      .sort((a, b) => a.seatNumber.localeCompare(b.seatNumber));
+    // Use the smart sort helper
+    const sortedOrders = getSortedOrders(
+      ctx.orders.filter(o => o.status === OrderStatus.SUBMITTED)
+    );
 
     sortedOrders.forEach(order => {
       const itemDetails = order.items.map(i => `${i.menuItem.name}*${i.quantity}`).join('; ');
-      csvContent += `${order.seatNumber},${order.userName},"${itemDetails}",${order.totalPrice}\n`;
+      // Escape quotes in CSV
+      const escapedDetails = itemDetails.replace(/"/g, '""');
+      csvContent += `${order.seatNumber},${order.userName},"${escapedDetails}",${order.totalPrice}\n`;
     });
 
-    const encodedUri = encodeURI(csvContent);
+    // Use Blob for better browser/Excel compatibility
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
-    link.setAttribute("href", encodedUri);
+    link.setAttribute("href", url);
     link.setAttribute("download", `mcdonalds_order_${new Date().toISOString().slice(0,10)}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+    URL.revokeObjectURL(url);
   };
 
   const handleSetDeadline = (minutes: number) => {
     ctx.adminSetDeadline(Date.now() + minutes * 60 * 1000);
   };
+
+  const displayedOrders = getSortedOrders(
+    ctx.orders.filter(o => 
+      o.userName.includes(searchTerm) || o.seatNumber.includes(searchTerm)
+    )
+  );
 
   return (
     <div className="min-h-screen bg-gray-100 pb-10">
@@ -226,10 +249,7 @@ const AdminView: React.FC<AdminViewProps> = ({ ctx }) => {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100 text-sm">
-                  {ctx.orders
-                    .filter(o => o.userName.includes(searchTerm) || o.seatNumber.includes(searchTerm))
-                    .sort((a,b) => a.seatNumber.localeCompare(b.seatNumber))
-                    .map(order => (
+                  {displayedOrders.map(order => (
                     <tr key={order.id} className="hover:bg-gray-50 group">
                       <td className="p-4 font-bold text-gray-700">{order.seatNumber}</td>
                       <td className="p-4">{order.userName}</td>
