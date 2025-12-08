@@ -36,9 +36,13 @@ const setStorage = (key: string, val: any) => {
   localStorage.setItem(key, JSON.stringify(val));
 };
 
+// --- Helper: Sanitize ID for Firebase paths ---
+const sanitizeId = (id: string) => {
+  return id.replace(/[.#$/[\]]/g, '_');
+};
+
 // --- Firebase Helper ---
 let db: any = null;
-let analytics: any = null;
 
 const initFirebase = (config: any) => {
   try {
@@ -49,13 +53,6 @@ const initFirebase = (config: any) => {
       app = getApp();
     }
     db = getDatabase(app);
-    if (typeof window !== 'undefined') {
-       try {
-         analytics = getAnalytics(app);
-       } catch (e) {
-         // Analytics optional
-       }
-    }
     return true;
   } catch (e) {
     console.error("Firebase init error:", e);
@@ -74,11 +71,9 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
 
   // 1. Initial Load & Connection
   useEffect(() => {
-    // Restore user session
     const savedUser = getStorage<User | null>(STORAGE_KEYS.CURRENT_USER, null);
     if (savedUser) setUser(savedUser);
 
-    // Force Connect to Firebase
     if (FIREBASE_CONFIG && FIREBASE_CONFIG.apiKey) {
       const success = initFirebase(FIREBASE_CONFIG);
       setIsConnected(success);
@@ -88,17 +83,14 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     }
   }, []);
 
-  // 2. Firebase Listeners (Always Active)
+  // 2. Firebase Listeners
   useEffect(() => {
     if (!db) return;
 
-    // Listen to Orders
     const ordersRef = ref(db, 'orders');
     const unsubOrders = onValue(ordersRef, (snapshot) => {
       const data = snapshot.val();
       if (data) {
-        // 重要修正：Firebase 若陣列為空會直接移除該 key，導致 items 為 undefined
-        // 這裡強制補上空陣列，避免前端操作報錯
         const orderList = (Object.values(data) as any[]).map(o => ({
           ...o,
           items: o.items || [] 
@@ -109,7 +101,6 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
       }
     });
 
-    // Listen to Settings
     const settingsRef = ref(db, 'settings');
     const unsubSettings = onValue(settingsRef, (snapshot) => {
       const data = snapshot.val();
@@ -124,26 +115,52 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     };
   }, [isConnected]);
 
-  // 3. Persist User only
+  // 3. Persist User
   useEffect(() => {
     setStorage(STORAGE_KEYS.CURRENT_USER, user);
   }, [user]);
 
   // --- Actions ---
 
+  const saveOrderToCloud = (order: Order) => {
+    // 1. Optimistic Update (立即更新本地 State，讓 UI 馬上反應)
+    setOrders(prev => {
+      const exists = prev.find(o => o.userId === order.userId);
+      if (exists) {
+        return prev.map(o => o.userId === order.userId ? order : o);
+      }
+      return [...prev, order];
+    });
+
+    // 2. Sync to Cloud
+    if (db) {
+      set(ref(db, 'orders/' + sanitizeId(order.userId)), order).catch(err => {
+        console.error("Firebase Set Error:", err);
+        if (err.code === 'PERMISSION_DENIED') {
+          alert("【錯誤】資料庫權限不足！\n請至 Firebase Console -> Realtime Database -> Rules\n將 read 和 write 設為 true。");
+        } else {
+          alert("資料同步失敗，請檢查網路連線");
+        }
+      });
+    } else {
+      console.warn("Database not initialized");
+    }
+  };
+
   const login = (name: string, seatNumber: string, isAdmin: boolean) => {
+    const safeSeat = sanitizeId(seatNumber);
     const newUser: User = {
-      id: isAdmin ? 'admin' : seatNumber,
+      id: isAdmin ? 'admin' : safeSeat,
       name,
-      seatNumber,
+      seatNumber: safeSeat,
       role: isAdmin ? UserRole.ADMIN : UserRole.STUDENT
     };
     setUser(newUser);
 
     if (!isAdmin) {
-      // 檢查是否已有訂單，若無則建立
+      // Login 時若無訂單，建立初始訂單 (也會觸發 Optimistic Update)
       const existing = orders.find(o => o.userId === newUser.id);
-      if (!existing && db) {
+      if (!existing) {
         const newOrder: Order = {
           id: `ord_${newUser.id}`,
           userId: newUser.id,
@@ -154,7 +171,8 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
           status: OrderStatus.DRAFT,
           timestamp: Date.now()
         };
-        set(ref(db, 'orders/' + newUser.id), newOrder);
+        // 這裡直接呼叫 saveOrderToCloud 確保同步
+        saveOrderToCloud(newOrder); 
       }
     }
   };
@@ -169,28 +187,15 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     return orders.find(o => o.userId === user.id) || null;
   };
 
-  const saveOrderToCloud = (order: Order) => {
-    if (db) {
-      set(ref(db, 'orders/' + order.userId), order).catch(err => {
-        alert("資料同步失敗，請檢查網路連線");
-        console.error(err);
-      });
-    } else {
-      alert("資料庫尚未連線，請稍後再試");
-    }
-  };
-
-  // 取得當前訂單或建立臨時訂單物件 (防呆用)
-  const getOrInitOrder = (): Order | null => {
-    if (!user || user.role === UserRole.ADMIN) return null;
+  // Helper to ensure we always have an order object to work with
+  const getOrInitOrder = (): Order => {
+    if (!user || user.role === UserRole.ADMIN) throw new Error("Invalid user role");
     
     const existing = orders.find(o => o.userId === user.id);
     if (existing) {
-      // 再次確保取出的物件有 items 陣列
       return { ...existing, items: existing.items || [] };
     }
 
-    // Fallback: 建立臨時訂單物件
     return {
       id: `ord_${user.id}`,
       userId: user.id,
@@ -204,8 +209,8 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   };
 
   const addToCart = (item: MenuItem) => {
+    if (!user) return;
     const order = getOrInitOrder();
-    if (!order) return;
     
     const currentItems = order.items || [];
     const existingItem = currentItems.find(i => i.menuItem.id === item.id);
@@ -225,8 +230,8 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   };
 
   const removeFromCart = (itemId: string) => {
-    const order = getOrInitOrder(); // 改用 getOrInitOrder 避免空指標
-    if (!order) return;
+    if (!user) return;
+    const order = getOrInitOrder();
     
     const currentItems = order.items || [];
     const newItems = currentItems.filter(i => i.menuItem.id !== itemId);
@@ -237,8 +242,8 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   };
 
   const updateCartQuantity = (itemId: string, delta: number) => {
-    const order = getOrInitOrder(); // 改用 getOrInitOrder 避免空指標
-    if (!order) return;
+    if (!user) return;
+    const order = getOrInitOrder();
     
     const currentItems = order.items || [];
     const newItems = currentItems.map(i => {
@@ -269,11 +274,14 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
 
   const adminToggleSystem = (isOpen: boolean) => {
     const newSettings = { ...settings, isOpen };
+    // Optimistic
+    setSettings(newSettings);
     if (db) set(ref(db, 'settings'), newSettings);
   };
 
   const adminSetDeadline = (timestamp: number | null) => {
     const newSettings = { ...settings, deadline: timestamp };
+    setSettings(newSettings);
     if (db) set(ref(db, 'settings'), newSettings);
   };
 
@@ -281,10 +289,11 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     const target = orders.find(o => o.id === orderId);
     if (!target) return;
     const resetOrder = { ...target, items: [], totalPrice: 0, status: OrderStatus.DRAFT };
-    if (db) set(ref(db, 'orders/' + target.userId), resetOrder);
+    saveOrderToCloud(resetOrder);
   };
 
   const adminResetAll = () => {
+    setOrders([]); // Optimistic clear
     if (db) remove(ref(db, 'orders'));
   };
 
