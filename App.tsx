@@ -97,7 +97,12 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     const unsubOrders = onValue(ordersRef, (snapshot) => {
       const data = snapshot.val();
       if (data) {
-        const orderList = Object.values(data) as Order[];
+        // 重要修正：Firebase 若陣列為空會直接移除該 key，導致 items 為 undefined
+        // 這裡強制補上空陣列，避免前端操作報錯
+        const orderList = (Object.values(data) as any[]).map(o => ({
+          ...o,
+          items: o.items || [] 
+        })) as Order[];
         setOrders(orderList);
       } else {
         setOrders([]);
@@ -136,8 +141,7 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     setUser(newUser);
 
     if (!isAdmin) {
-      // Login 時若無訂單則建立，但這是非同步的，可能會有延遲
-      // 所以下面的 addToCart 必須要能處理延遲
+      // 檢查是否已有訂單，若無則建立
       const existing = orders.find(o => o.userId === newUser.id);
       if (!existing && db) {
         const newOrder: Order = {
@@ -176,12 +180,15 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     }
   };
 
-  // 重要修正：如果 getCurrentOrder 回傳 null (資料還沒同步回來)，我們手動建立一個物件
+  // 取得當前訂單或建立臨時訂單物件 (防呆用)
   const getOrInitOrder = (): Order | null => {
     if (!user || user.role === UserRole.ADMIN) return null;
     
     const existing = orders.find(o => o.userId === user.id);
-    if (existing) return existing;
+    if (existing) {
+      // 再次確保取出的物件有 items 陣列
+      return { ...existing, items: existing.items || [] };
+    }
 
     // Fallback: 建立臨時訂單物件
     return {
@@ -197,17 +204,19 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   };
 
   const addToCart = (item: MenuItem) => {
-    const order = getOrInitOrder(); // 使用修正後的取值函式
+    const order = getOrInitOrder();
     if (!order) return;
     
-    const existingItem = order.items.find(i => i.menuItem.id === item.id);
+    const currentItems = order.items || [];
+    const existingItem = currentItems.find(i => i.menuItem.id === item.id);
+    
     let newItems;
     if (existingItem) {
-      newItems = order.items.map(i => 
+      newItems = currentItems.map(i => 
         i.menuItem.id === item.id ? { ...i, quantity: i.quantity + 1 } : i
       );
     } else {
-      newItems = [...order.items, { menuItem: item, quantity: 1 }];
+      newItems = [...currentItems, { menuItem: item, quantity: 1 }];
     }
     
     const totalPrice = newItems.reduce((sum, i) => sum + i.menuItem.price * i.quantity, 0);
@@ -216,19 +225,23 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   };
 
   const removeFromCart = (itemId: string) => {
-    const order = getCurrentOrder();
+    const order = getOrInitOrder(); // 改用 getOrInitOrder 避免空指標
     if (!order) return;
-    const newItems = order.items.filter(i => i.menuItem.id !== itemId);
+    
+    const currentItems = order.items || [];
+    const newItems = currentItems.filter(i => i.menuItem.id !== itemId);
+    
     const totalPrice = newItems.reduce((sum, i) => sum + i.menuItem.price * i.quantity, 0);
     const updatedOrder = { ...order, items: newItems, totalPrice, timestamp: Date.now() };
     saveOrderToCloud(updatedOrder);
   };
 
   const updateCartQuantity = (itemId: string, delta: number) => {
-    const order = getCurrentOrder();
+    const order = getOrInitOrder(); // 改用 getOrInitOrder 避免空指標
     if (!order) return;
     
-    const newItems = order.items.map(i => {
+    const currentItems = order.items || [];
+    const newItems = currentItems.map(i => {
       if (i.menuItem.id === itemId) {
         return { ...i, quantity: Math.max(0, i.quantity + delta) };
       }
@@ -281,7 +294,7 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     logout,
     menu: MENU_ITEMS,
     orders,
-    currentOrder: getCurrentOrder(), // UI 顯示仍用 currentOrder
+    currentOrder: getCurrentOrder(),
     settings,
     addToCart,
     removeFromCart,
