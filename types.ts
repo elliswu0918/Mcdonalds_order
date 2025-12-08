@@ -65,4 +65,5 @@ export interface AppContextType {
   adminSetDeadline: (date: number | null) => void;
   adminResetOrder: (orderId: string) => void;
   adminResetAll: () => void;
+  dbError: string | null; // 新增錯誤狀態
 }

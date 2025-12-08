@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { AppContextType, OrderStatus, Order } from '../types';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
-import { Download, RefreshCcw, Lock, Unlock, Trash, Search, LogOut } from 'lucide-react';
+import { Download, RefreshCcw, Lock, Unlock, Trash, Search, LogOut, AlertTriangle, Database } from 'lucide-react';
 
 interface AdminViewProps {
   ctx: AppContextType;
@@ -129,6 +129,33 @@ const AdminView: React.FC<AdminViewProps> = ({ ctx }) => {
           </div>
         </div>
       </header>
+
+      {/* ERROR BANNER */}
+      {ctx.dbError && (
+        <div className="max-w-6xl mx-auto mt-4 px-4">
+          <div className="bg-red-100 border-l-4 border-red-500 text-red-700 p-4 rounded shadow-sm">
+            <h3 className="font-bold flex items-center mb-2">
+              <Database className="mr-2" size={20} />
+              資料庫連線錯誤：資料無法儲存！
+            </h3>
+            {ctx.dbError === 'PERMISSION_DENIED' ? (
+              <div className="text-sm space-y-2">
+                <p>Firebase 拒絕存取。請依照以下步驟開啟權限：</p>
+                <ol className="list-decimal list-inside ml-2">
+                  <li>進入 <a href="https://console.firebase.google.com/" target="_blank" rel="noreferrer" className="underline font-bold">Firebase Console</a></li>
+                  <li>點選左側 <strong>Realtime Database</strong></li>
+                  <li>點選上方的 <strong>Rules (規則)</strong> 標籤</li>
+                  <li>將規則改為：<code>{`{ ".read": true, ".write": true }`}</code></li>
+                  <li>點選 <strong>Publish (發布)</strong></li>
+                </ol>
+                <p className="mt-2 font-bold">修改後，請重新整理此網頁。</p>
+              </div>
+            ) : (
+              <p className="text-sm">{ctx.dbError}</p>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Main Content */}
       <main className="max-w-6xl mx-auto p-4 md:p-6">

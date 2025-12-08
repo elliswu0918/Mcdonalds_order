@@ -1,6 +1,6 @@
 import React, { useMemo, useState, useEffect } from 'react';
 import { AppContextType, MenuItem, Category, OrderStatus } from '../types';
-import { ShoppingCart, Plus, Minus, Trash2, CheckCircle, Clock, AlertCircle, LogOut } from 'lucide-react';
+import { ShoppingCart, Plus, Minus, Trash2, CheckCircle, Clock, AlertCircle, LogOut, Database } from 'lucide-react';
 
 interface StudentViewProps {
   ctx: AppContextType;
@@ -151,6 +151,14 @@ const StudentView: React.FC<StudentViewProps> = ({ ctx }) => {
           </div>
         </div>
       </header>
+
+      {/* Connection Error Banner */}
+      {ctx.dbError && (
+        <div className="bg-red-600 text-white p-2 text-center text-sm font-bold flex justify-center items-center">
+           <Database className="mr-2" size={16} />
+           {ctx.dbError === 'PERMISSION_DENIED' ? '資料庫權限不足，訂單無法送出！請通知小老師。' : '系統連線異常，訂單可能未儲存。'}
+        </div>
+      )}
 
       {/* System Status Banner */}
       {!isSystemOpen && (
@@ -303,9 +311,9 @@ const StudentView: React.FC<StudentViewProps> = ({ ctx }) => {
           <button
             type="button"
             onClick={ctx.submitOrder}
-            disabled={!isSystemOpen || isOverBudget || cartTotal === 0 || isSetInvalid}
+            disabled={!isSystemOpen || isOverBudget || cartTotal === 0 || isSetInvalid || !!ctx.dbError}
             className={`px-6 py-3 rounded-xl font-bold text-white shadow-lg transition-all ${
-              !isSystemOpen || isOverBudget || cartTotal === 0 || isSetInvalid
+              !isSystemOpen || isOverBudget || cartTotal === 0 || isSetInvalid || !!ctx.dbError
                 ? 'bg-gray-400 cursor-not-allowed'
                 : 'bg-mcRed hover:bg-red-700 active:scale-95'
             }`}

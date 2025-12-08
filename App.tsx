@@ -67,6 +67,7 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [orders, setOrders] = useState<Order[]>([]);
   const [settings, setSettings] = useState<SystemSettings>(DEFAULT_SETTINGS);
   const [isConnected, setIsConnected] = useState(false);
+  const [dbError, setDbError] = useState<string | null>(null);
 
   // 1. Initial Load & Connection
   useEffect(() => {
@@ -77,15 +78,25 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
       const success = initFirebase(FIREBASE_CONFIG);
       setIsConnected(success);
       if (!success) {
-        // Silent fail for UI, buttons should still work locally
-        console.warn("Offline Mode");
+        setDbError("無法連線至 Firebase，請檢查網路配置。");
       }
     }
   }, []);
 
-  // 2. Firebase Listeners
+  // 2. Firebase Listeners & Permission Test
   useEffect(() => {
     if (!db) return;
+
+    // Test Write Permission immediately
+    const testRef = ref(db, '_connection_test');
+    set(testRef, { last_check: Date.now() }).catch(err => {
+      console.error("Connection Test Failed:", err);
+      if (err.code === 'PERMISSION_DENIED') {
+        setDbError("PERMISSION_DENIED");
+      } else {
+        setDbError(err.message);
+      }
+    });
 
     const ordersRef = ref(db, 'orders');
     const unsubOrders = onValue(ordersRef, (snapshot) => {
@@ -137,7 +148,9 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
       set(ref(db, 'orders/' + sanitizeId(order.userId)), order).catch(err => {
         console.error("Firebase Set Error:", err);
         if (err.code === 'PERMISSION_DENIED') {
-          alert("【錯誤】資料庫權限不足！請設定 Firebase Rules。");
+          setDbError("PERMISSION_DENIED");
+        } else {
+          setDbError("儲存失敗：" + err.message);
         }
       });
     }
@@ -206,7 +219,6 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     const order = getOrInitOrder();
     
     const currentItems = order.items || [];
-    // 強制比對 String ID，避免型別問題
     const existingItem = currentItems.find(i => String(i.menuItem.id) === String(item.id));
     
     let newItems;
@@ -269,13 +281,17 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const adminToggleSystem = (isOpen: boolean) => {
     const newSettings = { ...settings, isOpen };
     setSettings(newSettings);
-    if (db) set(ref(db, 'settings'), newSettings);
+    if (db) set(ref(db, 'settings'), newSettings).catch(err => {
+      if (err.code === 'PERMISSION_DENIED') setDbError("PERMISSION_DENIED");
+    });
   };
 
   const adminSetDeadline = (timestamp: number | null) => {
     const newSettings = { ...settings, deadline: timestamp };
     setSettings(newSettings);
-    if (db) set(ref(db, 'settings'), newSettings);
+    if (db) set(ref(db, 'settings'), newSettings).catch(err => {
+      if (err.code === 'PERMISSION_DENIED') setDbError("PERMISSION_DENIED");
+    });
   };
 
   const adminResetOrder = (orderId: string) => {
@@ -287,7 +303,9 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
 
   const adminResetAll = () => {
     setOrders([]);
-    if (db) remove(ref(db, 'orders'));
+    if (db) remove(ref(db, 'orders')).catch(err => {
+      if (err.code === 'PERMISSION_DENIED') setDbError("PERMISSION_DENIED");
+    });
   };
 
   const contextValue: AppContextType = {
@@ -307,6 +325,7 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     adminSetDeadline,
     adminResetOrder,
     adminResetAll,
+    dbError,
   };
 
   return (
