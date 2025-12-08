@@ -19,7 +19,6 @@ import { getDatabase, ref, onValue, set, remove } from 'firebase/database';
 import { getAnalytics } from "firebase/analytics";
 
 // --- Local Storage Keys ---
-// 只保留使用者身分，訂單與設定全部走雲端
 const STORAGE_KEYS = {
   CURRENT_USER: 'mc_user_v1',
 };
@@ -137,10 +136,10 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     setUser(newUser);
 
     if (!isAdmin) {
-      // Check if user already has an order in the loaded orders
+      // Login 時若無訂單則建立，但這是非同步的，可能會有延遲
+      // 所以下面的 addToCart 必須要能處理延遲
       const existing = orders.find(o => o.userId === newUser.id);
       if (!existing && db) {
-        // Initialize draft order directly to cloud
         const newOrder: Order = {
           id: `ord_${newUser.id}`,
           userId: newUser.id,
@@ -172,11 +171,33 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
         alert("資料同步失敗，請檢查網路連線");
         console.error(err);
       });
+    } else {
+      alert("資料庫尚未連線，請稍後再試");
     }
   };
 
+  // 重要修正：如果 getCurrentOrder 回傳 null (資料還沒同步回來)，我們手動建立一個物件
+  const getOrInitOrder = (): Order | null => {
+    if (!user || user.role === UserRole.ADMIN) return null;
+    
+    const existing = orders.find(o => o.userId === user.id);
+    if (existing) return existing;
+
+    // Fallback: 建立臨時訂單物件
+    return {
+      id: `ord_${user.id}`,
+      userId: user.id,
+      userName: user.name,
+      seatNumber: user.seatNumber,
+      items: [],
+      totalPrice: 0,
+      status: OrderStatus.DRAFT,
+      timestamp: Date.now()
+    };
+  };
+
   const addToCart = (item: MenuItem) => {
-    const order = getCurrentOrder();
+    const order = getOrInitOrder(); // 使用修正後的取值函式
     if (!order) return;
     
     const existingItem = order.items.find(i => i.menuItem.id === item.id);
@@ -260,7 +281,7 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     logout,
     menu: MENU_ITEMS,
     orders,
-    currentOrder: getCurrentOrder(),
+    currentOrder: getCurrentOrder(), // UI 顯示仍用 currentOrder
     settings,
     addToCart,
     removeFromCart,
