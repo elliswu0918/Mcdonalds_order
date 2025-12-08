@@ -16,7 +16,6 @@ import AdminView from './components/AdminView';
 // Firebase Imports
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import { getDatabase, ref, onValue, set, remove } from 'firebase/database';
-import { getAnalytics } from "firebase/analytics";
 
 // --- Local Storage Keys ---
 const STORAGE_KEYS = {
@@ -78,7 +77,8 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
       const success = initFirebase(FIREBASE_CONFIG);
       setIsConnected(success);
       if (!success) {
-        alert("無法連線至雲端資料庫，請檢查網路或 Firebase 設定。");
+        // Silent fail for UI, buttons should still work locally
+        console.warn("Offline Mode");
       }
     }
   }, []);
@@ -123,7 +123,7 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   // --- Actions ---
 
   const saveOrderToCloud = (order: Order) => {
-    // 1. Optimistic Update (立即更新本地 State，讓 UI 馬上反應)
+    // 1. Optimistic Update
     setOrders(prev => {
       const exists = prev.find(o => o.userId === order.userId);
       if (exists) {
@@ -137,13 +137,9 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
       set(ref(db, 'orders/' + sanitizeId(order.userId)), order).catch(err => {
         console.error("Firebase Set Error:", err);
         if (err.code === 'PERMISSION_DENIED') {
-          alert("【錯誤】資料庫權限不足！\n請至 Firebase Console -> Realtime Database -> Rules\n將 read 和 write 設為 true。");
-        } else {
-          alert("資料同步失敗，請檢查網路連線");
+          alert("【錯誤】資料庫權限不足！請設定 Firebase Rules。");
         }
       });
-    } else {
-      console.warn("Database not initialized");
     }
   };
 
@@ -158,7 +154,6 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     setUser(newUser);
 
     if (!isAdmin) {
-      // Login 時若無訂單，建立初始訂單 (也會觸發 Optimistic Update)
       const existing = orders.find(o => o.userId === newUser.id);
       if (!existing) {
         const newOrder: Order = {
@@ -171,7 +166,6 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
           status: OrderStatus.DRAFT,
           timestamp: Date.now()
         };
-        // 這裡直接呼叫 saveOrderToCloud 確保同步
         saveOrderToCloud(newOrder); 
       }
     }
@@ -187,7 +181,6 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     return orders.find(o => o.userId === user.id) || null;
   };
 
-  // Helper to ensure we always have an order object to work with
   const getOrInitOrder = (): Order => {
     if (!user || user.role === UserRole.ADMIN) throw new Error("Invalid user role");
     
@@ -213,12 +206,13 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     const order = getOrInitOrder();
     
     const currentItems = order.items || [];
-    const existingItem = currentItems.find(i => i.menuItem.id === item.id);
+    // 強制比對 String ID，避免型別問題
+    const existingItem = currentItems.find(i => String(i.menuItem.id) === String(item.id));
     
     let newItems;
     if (existingItem) {
       newItems = currentItems.map(i => 
-        i.menuItem.id === item.id ? { ...i, quantity: i.quantity + 1 } : i
+        String(i.menuItem.id) === String(item.id) ? { ...i, quantity: i.quantity + 1 } : i
       );
     } else {
       newItems = [...currentItems, { menuItem: item, quantity: 1 }];
@@ -234,7 +228,7 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     const order = getOrInitOrder();
     
     const currentItems = order.items || [];
-    const newItems = currentItems.filter(i => i.menuItem.id !== itemId);
+    const newItems = currentItems.filter(i => String(i.menuItem.id) !== String(itemId));
     
     const totalPrice = newItems.reduce((sum, i) => sum + i.menuItem.price * i.quantity, 0);
     const updatedOrder = { ...order, items: newItems, totalPrice, timestamp: Date.now() };
@@ -247,7 +241,7 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     
     const currentItems = order.items || [];
     const newItems = currentItems.map(i => {
-      if (i.menuItem.id === itemId) {
+      if (String(i.menuItem.id) === String(itemId)) {
         return { ...i, quantity: Math.max(0, i.quantity + delta) };
       }
       return i;
@@ -274,7 +268,6 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
 
   const adminToggleSystem = (isOpen: boolean) => {
     const newSettings = { ...settings, isOpen };
-    // Optimistic
     setSettings(newSettings);
     if (db) set(ref(db, 'settings'), newSettings);
   };
@@ -293,7 +286,7 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   };
 
   const adminResetAll = () => {
-    setOrders([]); // Optimistic clear
+    setOrders([]);
     if (db) remove(ref(db, 'orders'));
   };
 
@@ -318,16 +311,7 @@ const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
 
   return (
     <AppContext.Provider value={contextValue}>
-      {!isConnected ? (
-        <div className="min-h-screen flex items-center justify-center bg-gray-100 text-gray-500">
-          <div className="text-center">
-            <h2 className="text-xl font-bold mb-2">正在連線至雲端資料庫...</h2>
-            <p className="text-sm">請確保您已連上網際網路</p>
-          </div>
-        </div>
-      ) : (
-        children
-      )}
+      <Main />
     </AppContext.Provider>
   );
 };

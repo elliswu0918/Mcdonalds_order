@@ -70,7 +70,7 @@ const StudentView: React.FC<StudentViewProps> = ({ ctx }) => {
 
   if (isSubmitted) {
     return (
-      <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-center p-6">
+      <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-center p-6 z-50 relative">
         <div className="bg-white p-8 rounded-xl shadow-lg max-w-md w-full text-center">
           <CheckCircle size={64} className="text-green-500 mx-auto mb-4" />
           <h2 className="text-2xl font-bold text-gray-800 mb-2">訂單已送出！</h2>
@@ -91,6 +91,7 @@ const StudentView: React.FC<StudentViewProps> = ({ ctx }) => {
           </div>
 
           <button 
+             type="button"
              onClick={ctx.logout}
              className="text-gray-500 underline text-sm hover:text-gray-800"
           >
@@ -101,10 +102,13 @@ const StudentView: React.FC<StudentViewProps> = ({ ctx }) => {
     );
   }
 
+  // 確保 settings.isOpen 預設為 true，避免 undefined 導致按鈕失效
+  const isSystemOpen = ctx.settings.isOpen !== false;
+
   return (
-    <div className="min-h-screen bg-gray-50 pb-24">
+    <div className="min-h-screen bg-gray-50 pb-32">
       {/* Header */}
-      <header className="bg-white shadow-sm sticky top-0 z-20">
+      <header className="bg-white shadow-sm sticky top-0 z-40">
         <div className="max-w-4xl mx-auto px-4 py-3 flex justify-between items-center">
           <div className="flex items-center gap-2">
             <div className="bg-mcRed text-white px-2 py-1 rounded text-xs font-bold">
@@ -121,17 +125,18 @@ const StudentView: React.FC<StudentViewProps> = ({ ctx }) => {
                  <Clock size={14} className="mr-1" /> 剩餘: {timeLeft}
                </div>
              )}
-             <button onClick={ctx.logout} className="p-2 text-gray-400 hover:text-mcRed">
+             <button type="button" onClick={ctx.logout} className="p-2 text-gray-400 hover:text-mcRed">
                <LogOut size={20} />
              </button>
           </div>
         </div>
         
         {/* Category Tabs */}
-        <div className="overflow-x-auto whitespace-nowrap px-4 py-2 border-t scrollbar-hide">
+        <div className="overflow-x-auto whitespace-nowrap px-4 py-2 border-t scrollbar-hide bg-white">
           <div className="flex gap-2 max-w-4xl mx-auto">
             {categories.map((cat) => (
               <button
+                type="button"
                 key={cat.key}
                 onClick={() => setSelectedCategory(cat.key)}
                 className={`px-4 py-1.5 rounded-full text-sm font-medium transition-colors ${
@@ -148,7 +153,7 @@ const StudentView: React.FC<StudentViewProps> = ({ ctx }) => {
       </header>
 
       {/* System Status Banner */}
-      {!ctx.settings.isOpen && (
+      {!isSystemOpen && (
         <div className="bg-red-100 text-red-800 p-4 text-center font-bold">
           <AlertCircle className="inline mb-1 mr-2" size={18} />
           目前暫停訂餐
@@ -156,20 +161,19 @@ const StudentView: React.FC<StudentViewProps> = ({ ctx }) => {
       )}
 
       {/* Menu Grid */}
-      <main className="max-w-4xl mx-auto p-4">
+      <main className="max-w-4xl mx-auto p-4 z-0">
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
           {displayedItems.map(item => {
-             // Check if item is in cart
-             const inCart = ctx.currentOrder?.items.find(i => i.menuItem.id === item.id);
+             // Check if item is in cart (Safe check using String conversion)
+             const inCart = ctx.currentOrder?.items.find(i => String(i.menuItem.id) === String(item.id));
              
              // Logic for Set availability: Need 1 main per 1 set
-             // Valid if not SET, OR (is SET and current Sets < Mains)
-             // However, for the button state, we check if adding one more would exceed
              const isSet = item.category === 'SET';
+             // 只有當「是配餐」且「配餐數量 >= 主餐數量」時，才禁止再加
              const canAdd = !isSet || (setCount < mainCount);
 
              return (
-              <div key={item.id} className={`bg-white rounded-xl p-4 shadow-sm border border-gray-100 flex flex-col justify-between hover:shadow-md transition-shadow ${!canAdd && isSet && !inCart ? 'opacity-60 grayscale' : ''}`}>
+              <div key={item.id} className={`bg-white rounded-xl p-4 shadow-sm border border-gray-100 flex flex-col justify-between hover:shadow-md transition-shadow relative ${!canAdd && isSet && !inCart ? 'opacity-75' : ''}`}>
                 <div>
                   <div className="flex justify-between items-start mb-2">
                     <h3 className="font-bold text-lg text-gray-800">{item.name}</h3>
@@ -184,25 +188,40 @@ const StudentView: React.FC<StudentViewProps> = ({ ctx }) => {
                   {inCart ? (
                     <div className="flex items-center bg-gray-100 rounded-lg">
                       <button 
-                        onClick={() => ctx.updateCartQuantity(item.id, -1)}
-                        className="p-2 text-gray-600 hover:text-mcRed"
+                        type="button"
+                        onClick={(e) => { e.preventDefault(); ctx.updateCartQuantity(item.id, -1); }}
+                        className="p-3 text-gray-600 hover:text-mcRed active:bg-gray-200 rounded-l-lg"
                       >
                         <Minus size={16} />
                       </button>
                       <span className="font-bold w-8 text-center">{inCart.quantity}</span>
                       <button 
-                        onClick={() => ctx.updateCartQuantity(item.id, 1)}
-                        className="p-2 text-gray-600 hover:text-green-600"
-                        disabled={!ctx.settings.isOpen || (isSet && setCount >= mainCount)}
+                        type="button"
+                        onClick={(e) => { e.preventDefault(); ctx.updateCartQuantity(item.id, 1); }}
+                        className="p-3 text-gray-600 hover:text-green-600 active:bg-gray-200 rounded-r-lg"
+                        disabled={!isSystemOpen || (isSet && setCount >= mainCount)}
                       >
                         <Plus size={16} />
                       </button>
                     </div>
                   ) : (
                     <button
-                      onClick={() => ctx.addToCart(item)}
-                      disabled={!ctx.settings.isOpen || (!canAdd && isSet)}
-                      className="bg-mcYellow hover:bg-yellow-400 text-black font-medium py-2 px-4 rounded-lg text-sm w-full transition-colors disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-gray-200 disabled:text-gray-500"
+                      type="button"
+                      onClick={(e) => { 
+                        e.preventDefault();
+                        e.stopPropagation();
+                        if (isSet && !canAdd) {
+                          alert("配餐數量不能超過主餐數量，請先選擇主餐！");
+                          return;
+                        }
+                        ctx.addToCart(item); 
+                      }}
+                      disabled={!isSystemOpen}
+                      className={`font-medium py-2 px-4 rounded-lg text-sm w-full transition-colors active:scale-95 ${
+                         isSet && !canAdd 
+                         ? 'bg-gray-200 text-gray-500 cursor-not-allowed' 
+                         : 'bg-mcYellow hover:bg-yellow-400 text-black shadow-sm'
+                      }`}
                     >
                       {isSet && !canAdd ? '需搭配主餐' : '加入購物車'}
                     </button>
@@ -215,14 +234,14 @@ const StudentView: React.FC<StudentViewProps> = ({ ctx }) => {
       </main>
 
       {/* Mobile Sticky Cart Summary */}
-      <div className={`fixed bottom-0 left-0 right-0 bg-white shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.1)] transition-transform duration-300 z-30 ${isCartOpen ? 'translate-y-0' : 'translate-y-0'}`}>
+      <div className={`fixed bottom-0 left-0 right-0 bg-white shadow-[0_-4px_15px_-3px_rgba(0,0,0,0.1)] transition-transform duration-300 z-50 ${isCartOpen ? 'translate-y-0' : 'translate-y-0'}`}>
         
         {/* Expanded Cart Details */}
         {isCartOpen && (
           <div className="p-4 max-h-[60vh] overflow-y-auto border-b bg-gray-50">
             <div className="flex justify-between items-center mb-4">
               <h3 className="font-bold text-lg">購物車內容</h3>
-              <button onClick={() => setIsCartOpen(false)} className="text-gray-500 text-sm">關閉</button>
+              <button type="button" onClick={() => setIsCartOpen(false)} className="text-gray-500 text-sm p-2">關閉</button>
             </div>
             
             {(ctx.currentOrder?.items.length || 0) === 0 ? (
@@ -237,7 +256,7 @@ const StudentView: React.FC<StudentViewProps> = ({ ctx }) => {
                     </div>
                     <div className="flex items-center gap-3">
                        <span className="font-bold text-gray-700">${item.menuItem.price * item.quantity}</span>
-                       <button onClick={() => ctx.removeFromCart(item.menuItem.id)} className="text-red-400 hover:text-red-600">
+                       <button type="button" onClick={() => ctx.removeFromCart(item.menuItem.id)} className="text-red-400 hover:text-red-600 p-2">
                          <Trash2 size={18} />
                        </button>
                     </div>
@@ -258,7 +277,7 @@ const StudentView: React.FC<StudentViewProps> = ({ ctx }) => {
         {/* Bottom Bar */}
         <div className="p-4 bg-white flex items-center justify-between gap-4">
           <div 
-            className="flex-1 cursor-pointer" 
+            className="flex-1 cursor-pointer select-none" 
             onClick={() => setIsCartOpen(!isCartOpen)}
           >
             <div className="flex items-center gap-2">
@@ -282,10 +301,11 @@ const StudentView: React.FC<StudentViewProps> = ({ ctx }) => {
           </div>
 
           <button
+            type="button"
             onClick={ctx.submitOrder}
-            disabled={!ctx.settings.isOpen || isOverBudget || cartTotal === 0 || isSetInvalid}
-            className={`px-8 py-3 rounded-xl font-bold text-white shadow-lg transition-all ${
-              !ctx.settings.isOpen || isOverBudget || cartTotal === 0 || isSetInvalid
+            disabled={!isSystemOpen || isOverBudget || cartTotal === 0 || isSetInvalid}
+            className={`px-6 py-3 rounded-xl font-bold text-white shadow-lg transition-all ${
+              !isSystemOpen || isOverBudget || cartTotal === 0 || isSetInvalid
                 ? 'bg-gray-400 cursor-not-allowed'
                 : 'bg-mcRed hover:bg-red-700 active:scale-95'
             }`}
